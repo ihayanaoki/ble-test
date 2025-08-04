@@ -18,10 +18,14 @@
     let isSendingAck = false;
 
     document.getElementById("start").onclick = async () => {
-      await connect();
-      await sendCommand("START");
-      dataLog = [];
-      display("[開始コマンド送信]");
+      try {
+        await connect();
+        await sendCommand("START");
+        dataLog = [];
+        display("[開始コマンド送信]");
+      } catch (err) {
+        display("[エラー] " + err.message);
+      }
     };
 
     document.getElementById("stop").onclick = async () => {
@@ -111,4 +115,5 @@
     }
   </script>
 </body>
+
 </html>
