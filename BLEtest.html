@@ -91,11 +91,10 @@
         const ay = dv.getInt16(2, false) / 100.0;
         const az = dv.getInt16(4, false) / 100.0;
 
-        const line = `x:${ax.toFixed(2)} y:${ay.toFixed(2)} z:${az.toFixed(2)}`;
-        dataLog.push(line);
-        queueAck(); // ← キューに入れて送信
-        console.log("受信データ:", line);
+        dataLog.push({ ax, ay, az });
+        queueAck();
         return;
+
       }
 
       const value = new TextDecoder().decode(event.target.value).trim();
@@ -106,7 +105,43 @@
         display("[XIAO] 計測停止");
       } else if (value === "ENDED") {
         display("データ受信完了！");
-        display(dataLog.join("\n"));
+
+        if (dataLog.length === 0) {
+          display("[警告] 受信データがありません。");
+          return;
+        }
+
+        // 各軸の最大・最小と行番号
+        let maxX = -Infinity, minX = Infinity, maxXRow = -1, minXRow = -1;
+        let maxY = -Infinity, minY = Infinity, maxYRow = -1, minYRow = -1;
+        let maxZ = -Infinity, minZ = Infinity, maxZRow = -1, minZRow = -1;
+
+        dataLog.forEach((row, idx) => {
+          if (row.ax > maxX) { maxX = row.ax; maxXRow = idx; }
+          if (row.ax < minX) { minX = row.ax; minXRow = idx; }
+          if (row.ay > maxY) { maxY = row.ay; maxYRow = idx; }
+          if (row.ay < minY) { minY = row.ay; minYRow = idx; }
+          if (row.az > maxZ) { maxZ = row.az; maxZRow = idx; }
+          if (row.az < minZ) { minZ = row.az; minZRow = idx; }
+        });
+
+        // 表示用HTML生成
+        let html = '';
+        dataLog.forEach((row, idx) => {
+          const format = (val, isMax, isMin) => {
+            if (isMax) return `<span style="color:red">${val.toFixed(2)}</span>`;
+            if (isMin) return `<span style="color:blue">${val.toFixed(2)}</span>`;
+            return val.toFixed(2);
+          };
+
+          const xVal = format(row.ax, idx === maxXRow, idx === minXRow);
+          const yVal = format(row.ay, idx === maxYRow, idx === minYRow);
+          const zVal = format(row.az, idx === maxZRow, idx === minZRow);
+
+          html += `x:${xVal} y:${yVal} z:${zVal}<br>`;
+        });
+
+        document.getElementById("output").innerHTML += html;
       } else if (value.startsWith("ERROR")) {
         display("[エラー] " + value);
       } else {
