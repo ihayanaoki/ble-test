@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>BLE加速度データ受信</title>
+</head>
+<body>
+  <button id="start">スタート</button>
+  <button id="stop">ストップ</button>
+  <pre id="output"></pre>
+
+  <script>
+    let bleDevice, rxChar, txChar;
+    let dataLog = [];
+
+    // ACK送信用のキュー追加
+    let ackQueue = [];
+    let isSendingAck = false;
+
+    document.getElementById("start").onclick = async () => {
+      await connect();
+      await sendCommand("START");
+      dataLog = [];
+      display("[開始コマンド送信]");
+    };
+
+    document.getElementById("stop").onclick = async () => {
+      await sendCommand("STOP");
+      display("[停止コマンド送信]");
+    };
+
+    function display(msg) {
+      document.getElementById("output").textContent += msg + "\n";
+    }
+
+    async function connect() {
+      bleDevice = await navigator.bluetooth.requestDevice({
+        filters: [{ namePrefix: "XIAO" }],
+        optionalServices: ["6e400001-b5a3-f393-e0a9-e50e24dcca9e"]
+      });
+
+      const server = await bleDevice.gatt.connect();
+      const service = await server.getPrimaryService("6e400001-b5a3-f393-e0a9-e50e24dcca9e");
+      rxChar = await service.getCharacteristic("6e400003-b5a3-f393-e0a9-e50e24dcca9e");
+      txChar = await service.getCharacteristic("6e400002-b5a3-f393-e0a9-e50e24dcca9e");
+
+      await rxChar.startNotifications();
+      rxChar.addEventListener("characteristicvaluechanged", handleReceive);
+    }
+
+    // ACKをキューに入れて送信（重要）
+    async function queueAck() {
+      ackQueue.push("ACK");
+      processAckQueue();
+    }
+
+    async function processAckQueue() {
+      if (isSendingAck || ackQueue.length === 0) return;
+
+      isSendingAck = true;
+      const encoder = new TextEncoder();
+
+      while (ackQueue.length > 0) {
+        try {
+          await txChar.writeValue(encoder.encode(ackQueue.shift() + "\n"));
+          await new Promise(res => setTimeout(res, 20)); // 安定のための短い待機
+        } catch (err) {
+          console.error("ACK送信エラー:", err);
+        }
+      }
+
+      isSendingAck = false;
+    }
+
+    async function sendCommand(text) {
+      const encoder = new TextEncoder();
+      await txChar.writeValue(encoder.encode(text + "\n"));
+    }
+
+    async function handleReceive(event) {
+      const data = event.target.value;
+      const byteLength = data.byteLength;
+
+      if (byteLength === 6) {
+        const dv = new DataView(data.buffer);
+        const ax = dv.getInt16(0, false) / 100.0;
+        const ay = dv.getInt16(2, false) / 100.0;
+        const az = dv.getInt16(4, false) / 100.0;
+
+        const line = `x:${ax.toFixed(2)} y:${ay.toFixed(2)} z:${az.toFixed(2)}`;
+        dataLog.push(line);
+        queueAck(); // ← キューに入れて送信
+        console.log("受信データ:", line);
+        return;
+      }
+
+      const value = new TextDecoder().decode(event.target.value).trim();
+
+      if (value === "STARTED") {
+        display("[XIAO] 計測開始");
+      } else if (value === "STOPPED") {
+        display("[XIAO] 計測停止");
+      } else if (value === "ENDED") {
+        display("データ受信完了！");
+        display(dataLog.join("\n"));
+      } else if (value.startsWith("ERROR")) {
+        display("[エラー] " + value);
+      } else {
+        console.warn("未知の文字列データ:", value);
+      }
+    }
+  </script>
+</body>
+</html>
