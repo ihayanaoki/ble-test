@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <meta charset="UTF-8">
   <title>BLE加速度データ受信</title>
 </head>
@@ -8,6 +9,7 @@
   <button id="start">スタート</button>
   <button id="stop">ストップ</button>
   <pre id="output"></pre>
+  <canvas id="chart" width="400" height="200"></canvas>
 
   <script>
     let bleDevice, rxChar, txChar;
@@ -142,6 +144,55 @@
         });
 
         document.getElementById("output").innerHTML += html;
+
+        if (dataLog.length === 0) {
+          display("[警告] 受信データがありません。");
+          return;
+        }
+
+        // === 最大・最小値の処理は省略せずにこのまま（前回の回答を使用） ===
+        // ...最大・最小値の計算＆色付き表表示の処理...
+
+        // === Chart.js グラフ描画 ===
+        // 既存のグラフがあれば削除
+        if(window.myChart) {
+          window.myChart.destroy();
+        }
+
+        const labels = dataLog.map((_, i) => i + 1);
+        const xData = dataLog.map(d => d.ax);
+        const yData = dataLog.map(d => d.ay);
+        const zData = dataLog.map(d => d.az);
+
+        const ctx = document.getElementById('chart').getContext('2d');
+        window.myChart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: labels,
+            datasets: [
+              { label: 'X', data: xData, borderColor: 'red', fill: false },
+              { label: 'Y', data: yData, borderColor: 'green', fill: false },
+              { label: 'Z', data: zData, borderColor: 'blue', fill: false }
+            ]
+          },
+          options: {
+            responsive: true,
+            plugins: {
+              legend: { display: true },
+              tooltip: { enabled: true }
+            },
+            scales: {
+              y: {
+                suggestedMin: -2,
+                suggestedMax: 2,
+                title: { display: true, text: '加速度 (g)' }
+              },
+              x: {
+                title: { display: true, text: 'データ番号' }
+              }
+            }
+          }
+        });
       } else if (value.startsWith("ERROR")) {
         display("[エラー] " + value);
       } else {
