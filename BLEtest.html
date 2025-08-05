@@ -6,10 +6,14 @@
   <title>BLE加速度データ受信</title>
 </head>
 <body>
-  <button id="start">スタート</button>
-  <button id="stop">ストップ</button>
-  <pre id="output"></pre>
+  <div class="button-row">
+    <button id="start" class="main-btn start-btn">スタート</button>
+    <button id="stop" class="main-btn stop-btn">ストップ</button>
+  </div>
+  <div id="timer"></div>
+  <div id="now"></div>
   <canvas id="chart" width="400" height="200"></canvas>
+  <pre id="output"></pre>
 
   <script>
     let bleDevice, rxChar, txChar;
@@ -19,12 +23,50 @@
     let ackQueue = [];
     let isSendingAck = false;
 
+    let chartInitialized = false;
+    let chart;
+
+    window.onload = () => {
+      document.getElementById("start").disabled = false;
+      document.getElementById("stop").disabled = true;
+    };
+
+    function initChart() {
+      if(chart) chart.destroy();
+
+      const ctx = document.getElementById('chart').getContext('2d');
+      chart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: [],
+          datasets: [
+            { label: 'X', data: [], borderColor: 'red', fill: false },
+            { label: 'Y', data: [], borderColor: 'green', fill: false },
+            { label: 'Z', data: [], borderColor: 'blue', fill: false }
+          ]
+        },
+        options: {
+          animation: false, // アニメーションを切ってレスポンス優先
+          scales: { y: { suggestedMin: -2, suggestedMax: 2 } }
+        }
+      });
+      chartInitialized = true;
+    }
+
+    let startTime = null;
+
     document.getElementById("start").onclick = async () => {
       try {
         await connect();
         await sendCommand("START");
         dataLog = [];
         display("[開始コマンド送信]");
+        startTime = Date.now(); // ← 開始時刻記録
+        document.getElementById("timer").textContent = "計測中: 0秒";
+        startTimerInterval();
+
+        document.getElementById("start").disabled = true;
+        document.getElementById("stop").disabled = false;
       } catch (err) {
         display("[エラー] " + err.message);
       }
@@ -33,7 +75,26 @@
     document.getElementById("stop").onclick = async () => {
       await sendCommand("STOP");
       display("[停止コマンド送信]");
+      stopTimerInterval();
+
+      document.getElementById("stop").disabled = true;
     };
+
+    let timerInterval = null;
+    function startTimerInterval() {
+      stopTimerInterval(); // 2重起動防止
+      timerInterval = setInterval(() => {
+        if (startTime) {
+          const now = Date.now();
+          const elapsed = Math.floor((now - startTime) / 1000);
+          document.getElementById("timer").textContent = `計測中: ${elapsed}秒`;
+        }
+      }, 200);
+    }
+    function stopTimerInterval() {
+      if (timerInterval) clearInterval(timerInterval);
+      timerInterval = null;
+    }
 
     function display(msg) {
       document.getElementById("output").textContent += msg + "\n";
@@ -94,6 +155,18 @@
         const az = dv.getInt16(4, false) / 100.0;
 
         dataLog.push({ ax, ay, az });
+
+        // グラフがなければ初期化
+        if(!chartInitialized) initChart();
+
+        // 1件ずつデータ追加
+        chart.data.labels.push(dataLog.length);
+        chart.data.datasets[0].data.push(ax);
+        chart.data.datasets[1].data.push(ay);
+        chart.data.datasets[2].data.push(az);
+        chart.update();
+
+        
         queueAck();
         return;
 
@@ -154,45 +227,6 @@
         // ...最大・最小値の計算＆色付き表表示の処理...
 
         // === Chart.js グラフ描画 ===
-        // 既存のグラフがあれば削除
-        if(window.myChart) {
-          window.myChart.destroy();
-        }
-
-        const labels = dataLog.map((_, i) => i + 1);
-        const xData = dataLog.map(d => d.ax);
-        const yData = dataLog.map(d => d.ay);
-        const zData = dataLog.map(d => d.az);
-
-        const ctx = document.getElementById('chart').getContext('2d');
-        window.myChart = new Chart(ctx, {
-          type: 'line',
-          data: {
-            labels: labels,
-            datasets: [
-              { label: 'X', data: xData, borderColor: 'red', fill: false },
-              { label: 'Y', data: yData, borderColor: 'green', fill: false },
-              { label: 'Z', data: zData, borderColor: 'blue', fill: false }
-            ]
-          },
-          options: {
-            responsive: true,
-            plugins: {
-              legend: { display: true },
-              tooltip: { enabled: true }
-            },
-            scales: {
-              y: {
-                suggestedMin: -2,
-                suggestedMax: 2,
-                title: { display: true, text: '加速度 (g)' }
-              },
-              x: {
-                title: { display: true, text: 'データ番号' }
-              }
-            }
-          }
-        });
       } else if (value.startsWith("ERROR")) {
         display("[エラー] " + value);
       } else {
@@ -201,4 +235,47 @@
     }
   </script>
 </body>
+<style>
+  .button-row {
+    display: flex;
+    gap: 2em;
+    margin-bottom: 1em;
+    justify-content: center;
+  }
+
+  .main-btn {
+    font-size: 2rem;
+    padding: 0.7em 2.5em;
+    border-radius: 1em;
+    border: none;
+    box-shadow: 0 3px 8px rgba(0,0,0,0.08);
+    cursor: pointer;
+    font-weight: bold;
+    transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+  }
+
+  .start-btn {
+    background: #20c659;
+    color: #fff;
+  }
+  .start-btn:hover {
+    background: #18a047;
+  }
+
+  .stop-btn {
+    background: #d03b39;
+    color: #fff;
+  }
+  .stop-btn:hover {
+    background: #a22e29;
+  }
+
+  .main-btn:disabled {
+    background: #cccccc !important;
+    color: #fff !important;
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+</style>
 </html>
