@@ -182,7 +182,7 @@
     .card-title { font-weight: 700; }
     .card-body { padding: 12px 16px 16px; }
 
-    #chart { width: 100%; height: 360px; display:block; }
+    #chart { width: 100%; height: 360px; display:block;touch-action: none;}
     #output {
       height: 360px; overflow: auto; background: var(--card);
       border-radius: 0 0 var(--radius) var(--radius);
@@ -228,6 +228,83 @@
       font-weight: 800;
       letter-spacing: .02em;
     }
+
+    body.measuring-mode::after {
+      content: "";
+      position: fixed;
+      left: 0; bottom: 0;
+      width: 100%; height: 6px;
+      background: linear-gradient(90deg, #b91c1c, #ef4444, #b91c1c);
+      background-size: 200% 100%;
+      animation: barSlide 2s linear infinite;
+    }
+    @keyframes barSlide {
+      0% { background-position: 0% 0; }
+      100% { background-position: 200% 0; }
+    }
+
+    #timer.measuring::before {
+      content: "● ";
+      color: #ef4444;
+      animation: blink 1s steps(1, start) infinite;
+    }
+    @keyframes blink {
+      0%,50% { opacity: 1; }
+      51%,100% { opacity: 0; }
+    }
+
+  /* --- 後処理中（受信完了待ち）の強調 --- */
+  .badge.finishing {
+    background: linear-gradient(90deg, #f59e0b, #b45309);
+    animation: finishingPulse 1.1s ease-in-out infinite;
+  }
+  @keyframes finishingPulse {
+    0%,100% { transform: scale(1); opacity: 1; }
+    50%     { transform: scale(1.06); opacity: .8; }
+  }
+
+  .app-header.finishing {
+    box-shadow: 0 0 18px rgba(245,158,11,.85), 0 0 36px rgba(245,158,11,.55);
+  }
+
+  body.finishing-mode::after {
+    content: "";
+    position: fixed; left: 0; bottom: 0;
+    width: 100%; height: 6px;
+    background: linear-gradient(90deg, #b45309, #f59e0b, #b45309);
+    background-size: 200% 100%;
+    animation: finBar 1.8s linear infinite;
+  }
+  @keyframes finBar {
+    0% { background-position: 0% 0; }
+    100% { background-position: 200% 0; }
+  }
+
+  /* タイマーに“受信中…”の雰囲気を付与（色は控えめのオレンジ） */
+  #timer.finishing {
+    font-size: 20px;
+    color: var(--warning);
+    font-weight: 700;
+    letter-spacing: .02em;
+  }
+
+  /* インジケータ（インラインスピナー） */
+  .finishing-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 700;
+    color: var(--warning);
+  }
+  .finishing-indicator .dot {
+    width: 8px; height: 8px; border-radius: 999px;
+    background: var(--warning);
+    animation: dotBlink 1s infinite;
+  }
+  @keyframes dotBlink {
+    0%, 100% { opacity: .2; transform: scale(.9); }
+    50%      { opacity: 1; transform: scale(1.2); }
+  }
 
   </style>
 </head>
@@ -332,6 +409,11 @@
     let chartInitialized = false;
     let chart;
 
+    // ACKの送信状態を管理
+    let pendingStart = false;
+    let startAckTimer = null;
+    const START_ACK_TIMEOUT_MS = 3000; // 3秒以内に STARTED が来なければ失敗扱い
+
     const $ = (id) => document.getElementById(id);
 
     window.onload = () => {
@@ -370,6 +452,33 @@
       // ボタン状態（運用ポリシーに合わせ調整可能）
       // 計測中は reset 無効にして誤操作を防ぐ
       if ($('reset')) $('reset').disabled = !!on;
+    }
+
+    // STOP後～ENDEDまでの“後処理中（受信完了待ち）”表示
+    function setFinishing(on) {
+      // クラス切替
+      document.body.classList.toggle('finishing-mode', on);
+      document.querySelector('.app-header')?.classList.toggle('finishing', on);
+
+      const badge = document.querySelector('.badge');
+      if (badge) {
+        if (on) {
+          badge.textContent = '受信中…';
+          badge.classList.add('finishing');
+          badge.classList.remove('active'); // 計測中の赤点滅は外す
+        } else {
+          // 通常は Live、計測中は setMeasuring が上書き
+          badge.textContent = 'Live';
+          badge.classList.remove('finishing');
+        }
+      }
+
+      $('timer')?.classList.toggle('finishing', on);
+
+      // ボタン方針（後処理中は操作を最小化）
+      if ($('start'))  $('start').disabled  = true;
+      if ($('stop'))   $('stop').disabled   = true;
+      if ($('reset'))  $('reset').disabled  = true; // 誤操作防止
     }
 
     function initChart() {
@@ -472,26 +581,61 @@
     Chart.register(thresholdPlugin);
 
     const canvasEl = $('chart');
-    canvasEl.addEventListener('mousedown', e => {
+
+    let dragPointerId = null;
+
+    function setThresholdFromPixelY(pixelY) {
+      if (!chart) return;
+      thresholdY = chart.scales.y.getValueForPixel(pixelY);
+      const thInput = document.getElementById('threshold');
+      const thLabel = document.getElementById('thLabel');
+      if (thInput) thInput.value = thresholdY.toFixed(2);
+      if (thLabel) thLabel.textContent = thresholdY.toFixed(2);
+      chart.update('none');
+    }
+
+    function nearThreshold(pixelY, tolPx = 14) {
+      if (!chart) return false;
+      const y = chart.scales.y.getPixelForValue(thresholdY);
+      return Math.abs(pixelY - y) <= tolPx;
+    }
+
+    canvasEl.addEventListener('pointerdown', (e) => {
       if (!chart) return;
       const rect = canvasEl.getBoundingClientRect();
       const y = e.clientY - rect.top;
-      const threshY = chart.scales.y.getPixelForValue(thresholdY);
-      if (Math.abs(y - threshY) < 8) isDragging = true;
-    });
-    canvasEl.addEventListener('mousemove', e => {
-      if (isDragging && chart) {
-        const rect = canvasEl.getBoundingClientRect();
-        const y = e.clientY - rect.top;
-        thresholdY = chart.scales.y.getValueForPixel(y);
-        $('threshold').value = thresholdY.toFixed(2);
-        $('thLabel').textContent = thresholdY.toFixed(2);
-        chart.update('none');
-        updateAutoCount();
+
+      // しきい値線の近くを掴んだらドラッグ開始
+      if (nearThreshold(y)) {
+        isDragging = true;
+        dragPointerId = e.pointerId;
+        canvasEl.setPointerCapture(e.pointerId);
+        e.preventDefault();
+      } else {
+        // しきい値線近くでない → タップでその位置にセット（任意仕様）
+        // コメントアウトしたい場合は次の1行を外してください
+        setThresholdFromPixelY(y);
       }
     });
-    canvasEl.addEventListener('mouseup', () => isDragging = false);
-    canvasEl.addEventListener('mouseleave', () => isDragging = false);
+
+    canvasEl.addEventListener('pointermove', (e) => {
+      if (!isDragging || e.pointerId !== dragPointerId) return;
+      const rect = canvasEl.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      setThresholdFromPixelY(y);
+      e.preventDefault();
+    });
+
+    function endDrag(e) {
+      if (isDragging && (dragPointerId === null || e.pointerId === dragPointerId)) {
+        try { canvasEl.releasePointerCapture(dragPointerId); } catch {}
+        isDragging = false;
+        dragPointerId = null;
+      }
+    }
+    canvasEl.addEventListener('pointerup', endDrag);
+    canvasEl.addEventListener('pointercancel', endDrag);
+    canvasEl.addEventListener('pointerleave', endDrag);
     
     let startTime = null;
     let timerInterval = null;
@@ -537,19 +681,28 @@
           display('[エラー] 先に接続してください（接続ボタンを押してください）');
           return;
         }
+        // まずは START コマンドだけ送る（UIはまだ計測中にしない）
         await sendCommand('START');
-        dataLog = [];
-        resetChartData();
+        pendingStart = true;
+
+        // 画面は「開始待ち…」に留める
         display('[開始コマンド送信]');
-        startTime = Date.now();
-        $('timer').textContent = '計測中: 0秒';
-        $('now').textContent   = '計測中';
-        startTimerInterval();
-        setMeasuring(true);
-        $('start').disabled = true;
-        $('stop').disabled  = true; // ← ここは計測プロトコルに合わせて true/false を選択
-        // ※ STOP を許可するなら false に
-        $('stop').disabled  = false;
+        $('now').textContent = '開始待ち…';
+        $('start').disabled = true;   // 連打防止
+        $('stop').disabled  = true;   // まだ止められない
+
+        // 応答待ちタイマー（STARTED が来なければロールバック）
+        clearTimeout(startAckTimer);
+        startAckTimer = setTimeout(() => {
+          if (pendingStart) {
+            pendingStart = false;
+            display('[エラー] デバイスから開始応答が届きませんでした（タイムアウト）');
+            $('now').textContent = '接続済み';
+            $('start').disabled = false;
+            $('stop').disabled  = true;
+            setMeasuring(false);
+          }
+        }, START_ACK_TIMEOUT_MS);
       } catch (err) {
         display('[エラー] ' + err.message);
       }
@@ -558,7 +711,7 @@
     $('stop').onclick = async () => {
       await sendCommand('STOP');
       display('[停止コマンド送信]');
-      $('now').textContent = '停止中';
+      $('now').textContent = '受信中（後処理）';   // ← 文言を明確化
       stopTimerInterval();
       setMeasuring(false);
       $('stop').disabled = true;
@@ -634,12 +787,25 @@
 
       const value = new TextDecoder().decode(event.target.value).trim();
       if (value === 'STARTED') {
+        // ← ここで初めて「計測中」に遷移
+        pendingStart = false;
+        clearTimeout(startAckTimer);
+
         display('[XIAO] 計測開始');
+        startTime = Date.now();
+        $('timer').textContent = '計測中: 0秒';
+        $('now').textContent   = '計測中';
+        startTimerInterval();
+
+        setMeasuring(true);      // ★ ここでONにする
+        $('start').disabled = true;
+        $('stop').disabled  = false;     // 停止可能に
       } else if (value === 'STOPPED') {
         display('[XIAO] 計測停止');
       } else if (value === 'ENDED') {
         display('データ受信完了！');
         setMeasuring(false);
+        $('now').textContent = '停止中';
         $('reset').disabled = false;
         if (dataLog.length === 0) {
           display('[警告] 受信データがありません。');
