@@ -145,7 +145,12 @@
       align-items: end;
     }
     .field { display: grid; gap: 6px; }
-    .field label { font-size: 12px; color: var(--muted); letter-spacing: .03em; }
+    .field label {
+      font-size: 14px; /* 12pxから拡大 */
+      font-weight: 600;
+      color: var(--muted);
+      letter-spacing: .03em;
+    }
     .field input, .field select {
       appearance: none;
       background: var(--card);
@@ -306,6 +311,30 @@
     50%      { opacity: 1; transform: scale(1.2); }
   }
 
+  /* 画面が低いときは自動でギュッと詰める */
+  @media (max-height: 820px) {
+    body { font-size: 14px; }
+    .container { padding: 16px clamp(12px, 2vw, 20px); }
+    .app-header { padding: 10px 12px; border-radius: 12px; }
+    .controls { gap: 10px; }
+    .panel, .action-card, .status-card { padding: 10px; border-radius: 12px; }
+    .button-row .main-btn { padding: 10px 12px; font-size: 14px; }
+    .field input, .field select { padding: 8px 10px; font-size: 13px; }
+    .card-header { padding: 8px 10px; }
+    .card-body   { padding: 10px; }
+    /* チャートとログの高さを可変化（vh基準） */
+    #chart { height: clamp(220px, 34vh, 360px); }
+    #output { height: clamp(180px, 30vh, 360px); }
+  }
+
+  /* さらに低い端末向け（例: ラップトップのハーフウィンドウなど） */
+  @media (max-height: 680px) {
+    body { font-size: 13px; }
+    .button-row .main-btn { padding: 8px 10px; font-size: 13px; }
+    #chart  { height: clamp(180px, 30vh, 320px); }
+    #output { height: clamp(140px, 26vh, 320px); }
+  }
+
   </style>
 </head>
 <body>
@@ -372,7 +401,6 @@
       <div class="status-card">
         <div class="status-grid">
           <div class="status-label">受信件数</div><div id="rxCount" class="status-value">0</div>
-          <div class="status-label">しきい値</div><div id="thLabel" class="status-value">1.00</div>
         </div>
       </div>
     </section>
@@ -447,7 +475,7 @@
       $('timer')?.classList.toggle('measuring', on);
 
       // 画面タイトルにも状態を反映（任意：先頭に●を付ける）
-      document.title = (on ? '● ' : '') + 'BLE加速度データ受信（改善版）';
+      document.title = (on ? '● ' : '') + 'BLE加速度データ受信';
 
       // ボタン状態（運用ポリシーに合わせ調整可能）
       // 計測中は reset 無効にして誤操作を防ぐ
@@ -553,7 +581,7 @@
       chartInitialized = true;
     }
 
-    let thresholdY = 1.25;
+    let thresholdY = 1.00;
     let isDragging = false;
 
     const thresholdPlugin = {
@@ -588,9 +616,7 @@
       if (!chart) return;
       thresholdY = chart.scales.y.getValueForPixel(pixelY);
       const thInput = document.getElementById('threshold');
-      const thLabel = document.getElementById('thLabel');
       if (thInput) thInput.value = thresholdY.toFixed(2);
-      if (thLabel) thLabel.textContent = thresholdY.toFixed(2);
       chart.update('none');
     }
 
@@ -615,6 +641,7 @@
         // しきい値線近くでない → タップでその位置にセット（任意仕様）
         // コメントアウトしたい場合は次の1行を外してください
         setThresholdFromPixelY(y);
+        updateAutoCount();
       }
     });
 
@@ -624,6 +651,7 @@
       const y = e.clientY - rect.top;
       setThresholdFromPixelY(y);
       e.preventDefault();
+      updateAutoCount();
     });
 
     function endDrag(e) {
@@ -894,8 +922,7 @@
     $('threshold').addEventListener('input', e => {
       const val = parseFloat(e.target.value);
       if (!isNaN(val)) {
-        thresholdY = val;
-        $('thLabel').textContent = thresholdY.toFixed(2);
+        thresholdY = val;;
         chart?.update('none');
         updateAutoCount();
       }
@@ -982,7 +1009,6 @@
       thresholdY = 1.25;
       $('axis').value = 'all';
       $('threshold').value = thresholdY.toFixed(2);
-      $('thLabel').textContent = thresholdY.toFixed(2);
       $('count').value = '10';
       $('duration').value = '1';
       $('machine_duration').value = '10';
